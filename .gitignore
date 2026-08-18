@@ -1,0 +1,19 @@
+﻿# Environments
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Data & Models
+data/raw/*
+data/processed/*
+models/*.pkl
+models/*.h5
+
+# OS Files
+.DS_Store
+Thumbs.db

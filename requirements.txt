@@ -1,0 +1,18 @@
+﻿# API & Backend
+fastapi
+uvicorn
+redis
+httpx
+
+# ML & Data Processing
+pandas
+numpy
+scikit-learn
+xgboost
+imbalanced-learn
+
+# Core Forensics
+python-whois
+dnspython
+tldextract
+requests
