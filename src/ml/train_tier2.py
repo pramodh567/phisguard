@@ -30,6 +30,10 @@ def load_tier2_data(filepath="data/raw/kaggle_baseline.csv"):
     available_features = [f for f in combined_features if f in df.columns]
     
     df_sampled = df.sample(n=min(80000, len(df)), random_state=42).fillna(0)
+
+    # FIX: Invert the Kaggle abnormal_url column so 1 = Malicious, 0 = Safe
+    if 'abnormal_url' in df_sampled.columns:
+        df_sampled['abnormal_url'] = 1 - df_sampled['abnormal_url']
     
     X = df_sampled[available_features]
     y = df_sampled['label']
