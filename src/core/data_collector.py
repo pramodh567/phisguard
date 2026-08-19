@@ -1,79 +1,84 @@
+import os
 import pandas as pd
 import requests
-import zipfile
-import io
-import os
-import time
 
-# Ensure directories exist
 os.makedirs("data/raw", exist_ok=True)
 
-def download_malicious_urls():
-    print("Downloading recent malicious URLs from URLhaus (Abuse.ch)...")
-    urlhaus_csv_url = "https://urlhaus.abuse.ch/downloads/csv_recent/"
-    
+def get_live_trends():
+    """Fetches real-time, zero-day malicious URLs from URLhaus."""
+    print("1. Fetching LIVE zero-day threats from URLhaus...")
+    url = "https://urlhaus.abuse.ch/downloads/csv_recent/"
     try:
-        response = requests.get(urlhaus_csv_url, timeout=15)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
         
-        # URLHaus CSV has 8 lines of comments at the top starting with #
-        with open("data/raw/urlhaus_recent.csv", "wb") as f:
+        with open("data/raw/urlhaus.csv", "wb") as f:
             f.write(response.content)
             
-        # Read into Pandas, skipping the comment lines
-        df_malicious = pd.read_csv("data/raw/urlhaus_recent.csv", skiprows=8, header=None)
-        df_malicious.columns = ['id', 'dateadded', 'url', 'url_status', 'last_online', 'threat', 'tags', 'urlhaus_link', 'reporter']
-        
-        # Keep only the URL column and label it as 1 (Malicious)
-        df_malicious = df_malicious[['url']].copy()
-        df_malicious['label'] = 1
-        
-        print(f"Successfully downloaded {len(df_malicious)} malicious URLs.")
-        return df_malicious
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading URLhaus data: {e}")
-        return None
+        df = pd.read_csv("data/raw/urlhaus.csv", skiprows=8, header=None)
+        # The URL is in column index 2
+        df = df[[2]].rename(columns={2: 'url'})
+        df['label'] = 1
+        print(f"   -> Gathered {len(df)} live malicious URLs.")
+        return df
+    except Exception as e:
+        print(f"   -> Warning: Could not fetch live data ({e}). Continuing with baseline.")
+        return pd.DataFrame()
 
-def download_benign_urls():
-    print("Downloading Top 1M benign domains from Tranco...")
-    tranco_url = "https://tranco-list.eu/top-1m.csv.zip"
+def get_local_baseline():
+    """Reads the Kaggle dataset located in data/raw/kaggle_baseline.csv."""
+    print("2. Reading LOCAL baseline dataset from 'data/raw/kaggle_baseline.csv'...")
+    filepath = "data/raw/kaggle_baseline.csv"
     
+    if not os.path.exists(filepath):
+        print(f"   -> ERROR: File not found at '{filepath}'. Please verify the location.")
+        return pd.DataFrame()
+        
     try:
-        response = requests.get(tranco_url, timeout=30)
-        response.raise_for_status()
+        df = pd.read_csv(filepath)
         
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            # The zip usually contains a single csv file
-            csv_filename = z.namelist()[0]
-            with z.open(csv_filename) as f:
-                df_benign = pd.read_csv(f, header=None, names=['rank', 'domain'])
-                
-        # To balance the dataset, we'll take the top 50,000 domains and format them as URLs
-        df_benign = df_benign.head(50000).copy()
-        # Add https:// to make them look like standard URLs for our feature extractor
-        df_benign['url'] = "https://" + df_benign['domain']
-        df_benign['label'] = 0
-        df_benign = df_benign[['url', 'label']]
+        # Determine URL and label column names
+        url_col = 'url' if 'url' in df.columns else df.columns[0]
         
-        print(f"Successfully processed {len(df_benign)} benign URLs.")
-        df_benign.to_csv("data/raw/tranco_top_benign.csv", index=False)
-        return df_benign
+        if 'type' in df.columns:
+            df['label'] = df['type'].apply(lambda x: 0 if str(x).strip().lower() == 'benign' else 1)
+        elif 'label' in df.columns:
+            df['label'] = df['label'].astype(int)
+        else:
+            print("   -> ERROR: Could not find 'type' or 'label' column in baseline dataset.")
+            return pd.DataFrame()
+            
+        df = df[[url_col, 'label']].rename(columns={url_col: 'url'})
         
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading Tranco data: {e}")
-        return None
+        # Sample realistic baseline (50,000 Benign, 25,000 Malicious)
+        benign = df[df['label'] == 0]
+        malicious = df[df['label'] == 1]
+        
+        n_benign = min(50000, len(benign))
+        n_malicious = min(25000, len(malicious))
+        
+        sampled_benign = benign.sample(n=n_benign, random_state=42)
+        sampled_malicious = malicious.sample(n=n_malicious, random_state=42)
+        
+        print(f"   -> Sampled {len(sampled_benign)} safe and {len(sampled_malicious)} malicious baseline URLs.")
+        return pd.concat([sampled_benign, sampled_malicious])
+    except Exception as e:
+        print(f"   -> ERROR reading baseline data: {e}")
+        return pd.DataFrame()
 
 if __name__ == "__main__":
-    malicious = download_malicious_urls()
-    time.sleep(2) # Respect API limits
-    benign = download_benign_urls()
+    live_df = get_live_trends()
+    base_df = get_local_baseline()
     
-    if malicious is not None and benign is not None:
-        # Combine them for our initial dataset
-        combined_df = pd.concat([malicious, benign], ignore_index=True)
-        # Shuffle the dataset
-        combined_df = combined_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    if not base_df.empty:
+        print("\n3. Merging datasets into Master Training File...")
+        final_df = pd.concat([base_df, live_df], ignore_index=True)
+        final_df = final_df.dropna().drop_duplicates(subset=['url']).sample(frac=1, random_state=42).reset_index(drop=True)
         
-        combined_df.to_csv("data/raw/initial_dataset.csv", index=False)
-        print("\nData collection complete. Master file saved to 'data/raw/initial_dataset.csv'.")
+        output_path = "data/raw/initial_dataset.csv"
+        final_df.to_csv(output_path, index=False)
+        print(f"✅ Dataset prepared successfully: {len(final_df)} unique records saved to '{output_path}'.")
+        print("\nClass breakdown:")
+        print(final_df['label'].value_counts())
+    else:
+        print("\n❌ Pipeline aborted. Please check 'data/raw/kaggle_baseline.csv'.")

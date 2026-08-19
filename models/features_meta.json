@@ -1,0 +1,18 @@
+{
+    "features": [
+        "abnormal_url",
+        "path_len",
+        "url_len",
+        "domain_len",
+        "url_entropy",
+        "subdomain_count",
+        "suspicious_extension",
+        "phish_brand_mentions",
+        "phish_adv_exact_brand_match",
+        "phish_urgency_words",
+        "phish_security_words",
+        "phish_adv_number_count",
+        "phish_adv_hyphen_count",
+        "path_underscore_count"
+    ]
+}
