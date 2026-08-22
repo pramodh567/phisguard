@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PhishGuard - Dashboard</title>
+  <script>
+    const token = localStorage.getItem('pg_token');
+    if (!token) {
+      window.location.href = '/login';
+    } else {
+      window.postMessage({ type: "PG_LOGIN_SUCCESS", token: token }, "*");
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans p-6 lg:p-8 min-h-screen">
+
+  <div class="w-full max-w-7xl mx-auto">
+    <!-- Header -->
+    <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl">
+      <div>
+        <h1 class="text-2xl lg:text-3xl font-bold text-white flex items-center gap-3">
+          <span>🛡️</span> My PhishGuard Dashboard
+        </h1>
+        <p class="text-slate-400 text-sm mt-1">Real-Time Threat Telemetry & Personal Scan Logs</p>
+      </div>
+      <div class="flex items-center gap-3 w-full sm:w-auto">
+        <!-- REFRESH BUTTON -->
+        <button id="refresh-btn" onclick="handleRefresh()" class="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 active:scale-95 transition px-4 py-2 rounded-lg font-medium text-sm text-slate-200 border border-slate-600 shadow">
+          <span id="refresh-icon">🔄</span> Refresh
+        </button>
+        
+        <!-- DOWNLOAD REPORT -->
+        <button onclick="window.location.href='/api/v1/analyst/export'" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition px-4 py-2 rounded-lg font-semibold text-sm text-white shadow-lg">
+          📥 Download IoC Report
+        </button>
+
+        <!-- LOGOUT -->
+        <button onclick="logout()" class="bg-slate-700/80 hover:bg-red-900/60 hover:text-red-200 hover:border-red-700 transition px-4 py-2 rounded-lg font-medium text-sm text-slate-300 border border-slate-600">
+          Logout
+        </button>
+      </div>
+    </header>
+
+    <!-- Top Summary Widgets -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg">
+        <h3 class="text-base font-semibold mb-3 border-b border-slate-700 pb-2 text-slate-300">My Traffic Risk Distribution</h3>
+        <div class="relative h-56 w-full flex justify-center items-center">
+          <canvas id="riskChart"></canvas>
+        </div>
+      </div>
+      
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg flex flex-col justify-between">
+        <div>
+          <h3 class="text-base font-semibold mb-2 text-blue-400">Threat Shield Status</h3>
+          <p class="text-slate-400 text-sm mb-4">Real-time heuristics and Tranco whitelisting are continuously synchronizing your telemetry logs.</p>
+        </div>
+        <div class="bg-slate-900/80 p-4 rounded-lg border border-slate-700 space-y-2">
+            <div class="text-emerald-400 font-mono text-xs sm:text-sm flex items-center gap-2">
+                <span class="relative flex h-2.5 w-2.5">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                Authenticated Session Active
+            </div>
+            <div class="text-slate-400 font-mono text-xs flex items-center gap-2">
+                ⚡ Extension Client Connected
+            </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table Widget -->
+    <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg overflow-x-auto">
+      <div class="flex justify-between items-center mb-4 border-b border-slate-700 pb-3">
+        <h3 class="text-base font-semibold text-slate-200">Recent Scan Audit Trail</h3>
+        <span id="scan-count-badge" class="text-xs font-mono bg-slate-900 text-slate-300 px-3 py-1 rounded-full border border-slate-700">
+          0 Scans Logged
+        </span>
+      </div>
+      
+      <table class="w-full text-left border-collapse text-sm">
+        <thead>
+          <tr class="text-slate-400 bg-slate-900/60 uppercase text-[11px] tracking-wider">
+            <th class="py-2.5 px-4 rounded-tl-lg">Timestamp</th>
+            <th class="py-2.5 px-4">Scanned URL</th>
+            <th class="py-2.5 px-4">Risk Score</th>
+            <th class="py-2.5 px-4">Decision</th>
+            <th class="py-2.5 px-4 rounded-tr-lg">Inspection Tier</th>
+          </tr>
+        </thead>
+        <tbody id="scanTableBody"></tbody>
+      </table>
+
+      <!-- Compact Pagination Controls -->
+      <div class="flex flex-col sm:flex-row justify-between items-center gap-3 mt-4 pt-3 border-t border-slate-700/60 text-xs text-slate-400">
+        <div>
+          Showing <span id="page-range" class="font-semibold text-slate-200">0 - 0</span> of <span id="total-items" class="font-semibold text-slate-200">0</span> scans
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="prev-btn" onclick="changePage(-1)" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-medium transition">
+            Previous
+          </button>
+          <span id="page-indicator" class="px-3 font-mono text-xs text-slate-300">Page 1 / 1</span>
+          <button id="next-btn" onclick="changePage(1)" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-medium transition">
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let chartInstance = null;
+    let currentPage = 1;
+    let totalPages = 1;
+    const PAGE_SIZE = 15; // Set to 15 for a compact, single-screen layout
+
+    function logout() {
+      localStorage.removeItem('pg_token');
+      window.postMessage({ type: "PG_LOGOUT" }, "*");
+      setTimeout(() => { window.location.href = '/login'; }, 100);
+    }
+
+    function changePage(delta) {
+      const targetPage = currentPage + delta;
+      if (targetPage >= 1 && targetPage <= totalPages) {
+        currentPage = targetPage;
+        loadDashboardData(currentPage);
+      }
+    }
+
+    async function handleRefresh() {
+      const icon = document.getElementById('refresh-icon');
+      icon.classList.add('inline-block', 'animate-spin');
+      await loadDashboardData(currentPage);
+      setTimeout(() => {
+        icon.classList.remove('inline-block', 'animate-spin');
+      }, 400);
+    }
+
+    async function loadDashboardData(page = 1) {
+      try {
+        const res = await fetch(`/api/v1/analyst/history?page=${page}&page_size=${PAGE_SIZE}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.status === 401) return logout();
+
+        const data = await res.json();
+        currentPage = data.page;
+        totalPages = data.total_pages;
+
+        // 1. Populate Table
+        const tbody = document.getElementById('scanTableBody');
+        if (data.logs.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-slate-500">No scans logged yet. Browse with the extension active to populate history.</td></tr>`;
+        } else {
+          tbody.innerHTML = data.logs.map(log => {
+            let badgeColor = log.decision === 'MALICIOUS' ? 'bg-red-900/80 text-red-300 border border-red-700' : 
+                             log.decision === 'SUSPICIOUS' ? 'bg-amber-900/80 text-amber-300 border border-amber-700' : 
+                             'bg-emerald-900/80 text-emerald-300 border border-emerald-700';
+            return `
+              <tr class="border-b border-slate-700/40 hover:bg-slate-700/20 transition text-xs">
+                <td class="py-2.5 px-4 text-slate-400 whitespace-nowrap">${log.scanned_at}</td>
+                <td class="py-2.5 px-4 font-mono truncate max-w-xs text-blue-300" title="${log.url}">${log.url}</td>
+                <td class="py-2.5 px-4 font-bold ${log.risk_score > 50 ? 'text-red-400' : 'text-slate-300'}">${log.risk_score}%</td>
+                <td class="py-2.5 px-4"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeColor}">${log.decision}</span></td>
+                <td class="py-2.5 px-4 text-slate-400">${log.tier_executed}</td>
+              </tr>
+            `;
+          }).join('');
+        }
+
+        // 2. Update Pagination Stats
+        const startItem = data.total_items === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+        const endItem = Math.min(currentPage * PAGE_SIZE, data.total_items);
+        document.getElementById('page-range').textContent = `${startItem} - ${endItem}`;
+        document.getElementById('total-items').textContent = data.total_items;
+        document.getElementById('scan-count-badge').textContent = `${data.total_items} Scans Logged`;
+        document.getElementById('page-indicator').textContent = `Page ${currentPage} / ${totalPages}`;
+
+        document.getElementById('prev-btn').disabled = currentPage <= 1;
+        document.getElementById('next-btn').disabled = currentPage >= totalPages;
+
+        // 3. Render Chart
+        if (chartInstance) chartInstance.destroy();
+        const ctx = document.getElementById('riskChart').getContext('2d');
+        chartInstance = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Safe', 'Suspicious', 'Malicious'],
+            datasets: [{
+              data: data.stats,
+              backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+              borderColor: '#1e293b',
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { color: '#cbd5e1', font: { size: 11 } }
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error("Failed to load dashboard", error);
+      }
+    }
+    
+    loadDashboardData(1);
+  </script>
+</body>
+</html>

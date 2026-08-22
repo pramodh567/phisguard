@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "PhishGuard Real-Time Defense",
+  "version": "1.0.0",
+  "description": "AI-Powered Real-Time Phishing & Malicious URL Shield with Sub-10ms Detection.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1:8000/*", "http://localhost:8000/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PhishGuard Protection"
+  }
+}

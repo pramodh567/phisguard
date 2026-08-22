@@ -1,12 +1,12 @@
 import math
 import re
+import socket
 import requests
-from urllib.parse import urlparse
-from bs4 import BeautifulSoup
 import tldextract
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 
-# ----------------- CONSTANTS (Top Phishing Targets) ----------------- #
-# Representing the highest-value targets for impersonation across industries
+# ----------------- CONSTANTS ----------------- #
 TARGET_BRANDS = [
     'microsoft', 'apple', 'paypal', 'facebook', 'google', 'netflix', 'amazon', 
     'instagram', 'chase', 'wellsfargo', 'binance', 'coinbase', 'icloud', 
@@ -21,14 +21,13 @@ SUSPICIOUS_EXTENSIONS = ('.exe', '.apk', '.bat', '.scr', '.vbs', '.js', '.zip', 
 IP_REGEX = re.compile(r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')
 SPOOFED_HOST_REGEX = re.compile(r'(https?://)?([a-zA-Z0-9-]+\.)+(com|net|org|edu|gov|io|xyz|top)', re.IGNORECASE)
 
-# ----------------- HELPER ----------------- #
 def calculate_entropy(text: str) -> float:
     if not text: return 0.0
     length = len(text)
     char_counts = {c: text.count(c) for c in set(text)}
     return round(-sum((count / length) * math.log2(count / length) for count in char_counts.values()), 4)
 
-# ----------------- TIER 1: FAST MATH (< 5ms) ----------------- #
+# ----------------- TIER 1: FAST MATH (< 1ms) ----------------- #
 def extract_tier1_features(url: str) -> dict:
     url_to_parse = url if url.startswith(('http://', 'https://')) else 'http://' + url
     parsed = urlparse(url_to_parse)
@@ -37,16 +36,13 @@ def extract_tier1_features(url: str) -> dict:
     url_lower = url.lower()
     ext = tldextract.extract(url_to_parse)
     
-    # 1. Abnormal URL Logic
     is_ip = 1 if IP_REGEX.match(domain) else 0
     has_spoofed_path = 1 if SPOOFED_HOST_REGEX.search(path) else 0
     abnormal_url = 1 if (is_ip or has_spoofed_path) else 0
 
-    # 2. Brands & Keywords Logic
     brand_mentions = sum(1 for b in TARGET_BRANDS if b in url_lower)
     exact_brand_spoof = 0
     for b in TARGET_BRANDS:
-        # If the brand is in the subdomain but the root domain is NOT the brand (e.g. paypal.attacker.com)
         if b in url_lower and b in ext.subdomain and ext.domain != b:
             exact_brand_spoof = 1
 
@@ -54,7 +50,6 @@ def extract_tier1_features(url: str) -> dict:
     urgency_words = sum(1 for t in tokens if t in URGENCY_KEYWORDS)
     security_words = sum(1 for t in tokens if t in SECURITY_KEYWORDS)
 
-    # 3. Structural Logic
     subdomain_count = len(ext.subdomain.split('.')) if ext.subdomain else 0
     suspicious_ext = 1 if any(path.endswith(e) for e in SUSPICIOUS_EXTENSIONS) else 0
 
@@ -75,10 +70,37 @@ def extract_tier1_features(url: str) -> dict:
         'path_underscore_count': path.count('_')
     }
 
-# ----------------- TIER 2: LIVE NETWORK (200 - 800ms) ----------------- #
-def extract_tier2_features(url: str, timeout: float = 2.0) -> dict:
+# ----------------- PARALLEL HELPER TASKS ----------------- #
+def _check_host_resolution(host: str) -> bool:
+    """Uses native OS C-level gethostbyname (fast & cached)."""
+    try:
+        socket.setdefaulttimeout(0.2)
+        socket.gethostbyname(host)
+        return True
+    except Exception:
+        return False
+
+def _fetch_headers_fast(url: str, timeout: float = 0.25) -> dict:
+    """Uses HTTP HEAD without following redirects for maximum speed."""
+    res = {'status': 0, 'hsts': 0, 'xframe': 0, 'is_https': 0}
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        # Disable allow_redirects to prevent multi-hop CDN latency delays
+        r = requests.head(url, timeout=timeout, headers=headers, allow_redirects=False)
+        res['status'] = r.status_code
+        if 'Strict-Transport-Security' in r.headers: res['hsts'] = 1
+        if 'X-Frame-Options' in r.headers or 'Content-Security-Policy' in r.headers: res['xframe'] = 1
+        if url.startswith('https'): res['is_https'] = 1
+    except Exception:
+        pass
+    return res
+
+# ----------------- TIER 2: CONCURRENT NETWORK RESOLUTION ----------------- #
+def extract_tier2_features(url: str, timeout: float = 0.35) -> dict:
     url_to_fetch = url if url.startswith(('http://', 'https://')) else 'http://' + url
-    
+    parsed = urlparse(url_to_fetch)
+    host = parsed.netloc.split(':')[0]
+
     features = {
         'web_unique_domains': 0,
         'web_security_score': 0.0,
@@ -88,52 +110,25 @@ def extract_tier2_features(url: str, timeout: float = 2.0) -> dict:
         'web_is_live': 0
     }
     
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url_to_fetch, timeout=timeout, headers=headers, allow_redirects=True)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_dns = executor.submit(_check_host_resolution, host)
+        future_http = executor.submit(_fetch_headers_fast, url_to_fetch, timeout)
         
-        # HTTP Status & Liveness
-        features['web_is_live'] = 1
-        features['web_http_status'] = response.status_code
-        
-        # Security Headers
-        if 'Strict-Transport-Security' in response.headers:
-            features['web_hsts'] = 1
-        if 'X-Frame-Options' in response.headers or 'Content-Security-Policy' in response.headers:
-            features['web_xframe'] = 1
-            
-        # Composite Security Score (0.0 to 1.0)
-        score = 0.0
-        if response.url.startswith('https'): score += 0.4
-        if features['web_hsts']: score += 0.3
-        if features['web_xframe']: score += 0.3
-        features['web_security_score'] = round(score, 2)
-        
-        # HTML Parsing: Safely count unique external domains linked in the page
-        soup = BeautifulSoup(response.text, 'html.parser')
-        unique_domains = set()
-        for link in soup.find_all('a', href=True):
-            href_val = str(link.get('href', ''))
-            href_domain = tldextract.extract(href_val).domain
-            if href_domain:
-                unique_domains.add(href_domain)
-        features['web_unique_domains'] = len(unique_domains)
-        
-    except requests.RequestException:
-        pass
-        
-    return features
+        is_live = future_dns.result()
+        http_data = future_http.result()
 
-if __name__ == "__main__":
-    import json
+    if is_live:
+        features['web_is_live'] = 1
+
+    features['web_http_status'] = http_data['status']
+    features['web_hsts'] = http_data['hsts']
+    features['web_xframe'] = http_data['xframe']
     
-    test_url = input("Enter a URL to test (e.g., https://google.com): ").strip()
+    # Calculate Composite Security Score
+    score = 0.0
+    if http_data['is_https']: score += 0.3
+    if http_data['hsts']: score += 0.35
+    if http_data['xframe']: score += 0.35
+    features['web_security_score'] = round(min(1.0, score), 2)
     
-    print(f"\n--- Extracting Tier 1 (Math) Features ---")
-    t1_features = extract_tier1_features(test_url)
-    print(json.dumps(t1_features, indent=4))
-    
-    print(f"\n--- Extracting Tier 2 (Network) Features ---")
-    print("(Fetching live data, please wait up to 2 seconds...)")
-    t2_features = extract_tier2_features(test_url)
-    print(json.dumps(t2_features, indent=4))
+    return features

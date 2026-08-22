@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+  <title>PhishGuard</title>
+</head>
+<body>
+  
+  <!-- AUTH SCREEN (Shown if not logged in) -->
+  <div id="auth-screen" style="display: none; flex-direction: column; align-items: center; justify-content: center; height: 260px; padding: 20px; text-align: center;">
+    <span style="font-size: 32px; margin-bottom: 10px;">🛡️</span>
+    <h2 style="font-size: 18px; margin-bottom: 5px; color: white;">Login Required</h2>
+    <p style="font-size: 13px; color: #9ca3af; margin-bottom: 20px;">Please log in to PhishGuard to scan sites and save history.</p>
+    <button id="ext-login-btn" style="background: #2563eb; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; font-family: inherit;">Open Login Page</button>
+  </div>
+
+  <!-- APP SCREEN -->
+  <div id="app-screen" style="display: none;">
+    <div class="header">
+      <div class="logo-title">
+        <span class="shield-icon">🛡️</span>
+        <h3>PhishGuard AI</h3>
+      </div>
+      <span id="backend-status" class="status-dot online"></span>
+    </div>
+
+    <div class="card" id="result-card">
+      <div class="status-header">
+        <span id="verdict-tag" class="tag safe">SCANNING...</span>
+        <span id="latency-tag" class="latency">-- ms</span>
+      </div>
+      <div class="score-container">
+        <div class="score-label">Threat Risk</div>
+        <div class="score-value" id="risk-score">0%</div>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Inspection:</span>
+        <span class="meta-val" id="tier-used">--</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Scanned URL:</span>
+        <span class="meta-val url-text" id="target-url">--</span>
+      </div>
+    </div>
+
+    <div class="features-section">
+      <h4>Threat Signals Breakdown</h4>
+      <ul class="signal-list">
+        <li><span>Abnormal Format:</span> <strong id="sig-abnormal">No</strong></li>
+        <li><span>Brand Impersonation:</span> <strong id="sig-brand">No</strong></li>
+        <li><span>Shannon Entropy:</span> <strong id="sig-entropy">0.0</strong></li>
+      </ul>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px;">
+      <button id="rescan-btn" class="rescan-btn" style="margin-top: 0;">Re-Scan Page</button>
+      <button id="dashboard-btn" style="background: #1e293b; color: #60a5fa; border: 1px solid #3b82f6; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; transition: 0.2s;">📊 View My History & Dashboard</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
