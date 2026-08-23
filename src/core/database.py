@@ -1,53 +1,65 @@
 import os
-import datetime
+from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
-# By default, uses SQLite locally (phishguard.db in project root).
-# To use PostgreSQL, set the DATABASE_URL environment variable:
-# DATABASE_URL="postgresql://user:password@localhost:5432/phishguard"
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./phishguard.db")
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+# Environment-aware Database URL
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "sqlite:///./phishguard.db" # Default fallback for local testing
 )
+
+# Connect configuration based on DB type
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    # PostgreSQL Production Pool Config
+    engine = create_engine(
+        DATABASE_URL, 
+        pool_pre_ping=True, 
+        pool_size=10, 
+        max_overflow=20
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# ----------------- DATABASE SCHEMAS ----------------- #
-
+# ----------------- DATABASE MODELS ----------------- #
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, index=True, nullable=False)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    email = Column(String(100), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
-    role = Column(String(50), default="analyst")  # analyst, admin
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    scans = relationship("ScanLog", back_populates="user")
+    scans = relationship("ScanLog", back_populates="user", cascade="all, delete-orphan")
 
 
 class ScanLog(Base):
     __tablename__ = "scan_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for anonymous/extension scans
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     url = Column(Text, nullable=False)
-    domain = Column(String(255), index=True)
-    risk_score = Column(Float, nullable=False)
-    decision = Column(String(50), nullable=False)  # SAFE, SUSPICIOUS, MALICIOUS
-    tier_executed = Column(String(100), nullable=False)
+    verdict = Column(String(20), nullable=False)        # SAFE / SUSPICIOUS / MALICIOUS
+    confidence = Column(Float, nullable=False)
     latency_ms = Column(Float, nullable=False)
-    features_json = Column(Text, nullable=True)
-    scanned_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    scan_type = Column(String(20), default="TIER1")     # TIER1 / TIER2 / WHITELIST
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="scans")
 
-
+# ----------------- DATABASE HELPERS ----------------- #
 def init_db():
-    """Initializes and verifies all database tables."""
+    """Creates database tables if they do not exist."""
     Base.metadata.create_all(bind=engine)
+
+def get_db():
+    """Database session dependency for FastAPI routes."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

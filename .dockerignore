@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+experiments/
+extension/
+.git/
+.gitignore
+seen_hashes.json
+phishguard.db

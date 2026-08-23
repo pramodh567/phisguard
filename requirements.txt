@@ -1,18 +1,15 @@
-﻿# API & Backend
-fastapi
-uvicorn
-redis
-httpx
-
-# ML & Data Processing
-pandas
-numpy
-scikit-learn
-xgboost
-imbalanced-learn
-
-# Core Forensics
-python-whois
-dnspython
-tldextract
-requests
+﻿fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+redis>=5.0.0
+pyjwt>=2.8.0
+bcrypt>=4.0.1
+xgboost>=1.7.0
+scikit-learn>=1.2.0
+pandas>=2.0.0
+pyarrow>=14.0.0
+tldextract>=3.4.0
+requests>=2.31.0
+joblib>=1.3.0

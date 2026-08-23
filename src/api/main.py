@@ -17,6 +17,7 @@ from pydantic import BaseModel
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.core.feature_extractor import extract_tier1_features, extract_tier2_features
 from src.core.build_whitelist import TrancoBloomFilter
+from src.core.redis_cache import get_cached_scan, set_cached_scan
 from src.core.database import SessionLocal, ScanLog, init_db
 from src.api.auth import router as auth_router, get_optional_user, get_db
 from src.api.dashboard import router as dashboard_router
@@ -125,16 +126,26 @@ def scan_url(request: URLScanRequest, background_tasks: BackgroundTasks, req: Re
     if not raw_url:
         raise HTTPException(status_code=400, detail="URL cannot be empty.")
 
-    # Get the user ID if the extension sent a token
+    # Get optional authenticated user
     user = get_optional_user(req, db)
     user_id = getattr(user, "id") if user else None
 
-    # 1. Tranco Whitelist Pre-Filter
+    # ----------------- 0. REDIS IN-MEMORY CACHE CHECK ----------------- #
+    cached_result = get_cached_scan(raw_url)
+    if cached_result:
+        elapsed = round((time.time() - start_time) * 1000, 2)
+        cached_result["latency_ms"] = elapsed
+        
+        # Log cache-hit scan in background
+        background_tasks.add_task(log_scan_to_database, cached_result, user_id)
+        return URLScanResponse(**cached_result)
+
+    # ----------------- 1. TRANCO WHITELIST PRE-FILTER ----------------- #
     ext = tldextract.extract(raw_url)
     root_domain = f"{ext.domain}.{ext.suffix}".lower()
     t1_extracted = extract_tier1_features(raw_url)
 
-    if tranco_whitelist.check(root_domain) and t1_extracted['phish_adv_exact_brand_match'] == 0:
+    if tranco_whitelist.check(root_domain) and t1_extracted.get('phish_adv_exact_brand_match', 0) == 0:
         elapsed = round((time.time() - start_time) * 1000, 2)
         response_payload = {
             "url": raw_url,
@@ -145,10 +156,13 @@ def scan_url(request: URLScanRequest, background_tasks: BackgroundTasks, req: Re
             "latency_ms": elapsed,
             "features_breakdown": t1_extracted
         }
+        
+        # Cache whitelist decision (1 hour TTL for known safe sites)
+        set_cached_scan(raw_url, response_payload, ttl_seconds=3600)
         background_tasks.add_task(log_scan_to_database, response_payload, user_id)
         return URLScanResponse(**response_payload)
 
-    # 2. Tier 1 Fast Math Inference
+    # ----------------- 2. TIER 1 FAST MATH INFERENCE ----------------- #
     t1_df = pd.DataFrame([t1_extracted])[tier1_features]
     t1_prob = float(tier1_model.predict_proba(t1_df)[0][1])
 
@@ -156,14 +170,14 @@ def scan_url(request: URLScanRequest, background_tasks: BackgroundTasks, req: Re
     final_prob = t1_prob
     combined_features = t1_extracted.copy()
 
-    # 3. Tier 2 Escalation (20% to 80% ambiguity)
+    # ----------------- 3. TIER 2 ESCALATION (20% to 80%) -------------- #
     if 0.20 <= t1_prob <= 0.80:
         tier_used = "Tier 2 (Deep Inspector)"
         combined_features.update(extract_tier2_features(raw_url, timeout=0.35))
         t2_df = pd.DataFrame([combined_features])[tier2_features]
         final_prob = float(tier2_model.predict_proba(t2_df)[0][1])
 
-    # 4. Final Decision Mapping
+    # ----------------- 4. FINAL DECISION MAPPING ---------------------- #
     if final_prob < 0.25:
         decision_label = "SAFE"
     elif final_prob < 0.50:
@@ -182,5 +196,10 @@ def scan_url(request: URLScanRequest, background_tasks: BackgroundTasks, req: Re
         "features_breakdown": combined_features
     }
 
+    # Cache scan result in Redis (30-minute TTL)
+    set_cached_scan(raw_url, response_payload, ttl_seconds=1800)
+    
+    # Asynchronously log scan to PostgreSQL
     background_tasks.add_task(log_scan_to_database, response_payload, user_id)
+    
     return URLScanResponse(**response_payload)

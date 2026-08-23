@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: phishguard_db
+    restart: always
+    environment:
+      POSTGRES_USER: phishguard_user
+      POSTGRES_PASSWORD: phishguard_secure_pass
+      POSTGRES_DB: phishguard_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - phishguard_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phishguard_user -d phishguard_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: phishguard_redis
+    restart: always
+    volumes:
+      - redisdata:/data
+    networks:
+      - phishguard_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. FastAPI Web Application
+  api:
+    build: .
+    container_name: phishguard_api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://phishguard_user:phishguard_secure_pass@db:5432/phishguard_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - phishguard_net
+
+networks:
+  phishguard_net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
